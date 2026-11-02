@@ -7,7 +7,7 @@ import time
 OLLAMA_URL = "http://localhost:11434"
 MODEL = "llama3.2:1b"
 DOCS_DIR = "docs"
-DISTANCE_THRESHOLD = 0.1
+DISTANCE_THRESHOLD = 0.6 # Started at 1.0, but all chunks passed. 0.6 blocks unrelated questions (best distances 0.80+)
 HIGH_CONFIDENCE_THRESHOLD = 0.5
 MEDIUM_CONFIDENCE_THRESHOLD = 1.0
 
