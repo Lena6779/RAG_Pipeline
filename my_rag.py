@@ -51,7 +51,7 @@ def retrieve(collection, query, n_results=3):
     """Search ChromaDB and return the top matching chunks."""
     results = collection.query(
         query_texts=[query],
-        n_results=min(n_results, collection.count())
+        n_results=min(n_results, collection.count())  # Never ask for more results than exist
     )
 
     chunks = []
@@ -110,10 +110,10 @@ def generate(messages, stream=False):
         if stream:
             full_response = ""
             for line in response.iter_lines():
-                if line:
+                if line: # only process non-empty lines
                     data = json.loads(line)
                     token = data.get("message", {}).get("content", "")
-                    if token:
+                    if token: # the final message has stats but no text with it
                         print(token, end="", flush=True)
                         full_response += token
             print()
