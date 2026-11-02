@@ -1,6 +1,6 @@
 # RAG Pipeline with ChromaDB and Ollama
 
-A complete local Retrieval-Augmented Generation (RAG) pipeline. It loads a folder of documents, stores them in a persistent ChromaDB vector database, retrieves the most relevant chunks for a question, and uses a local LLM through Ollama to generate an answer grounded in those chunks.
+A complete local Retrieval-Augmented Generation (RAG) pipeline with guardrails. It loads a folder of documents, stores them in a persistent ChromaDB vector database, retrieves the most relevant chunks for a question, filters out weak matches, and uses a local LLM through Ollama to generate an answer grounded in the remaining chunks. Each response includes the answer, its sources, a confidence level, and the number of chunks used.
 
 Everything runs locally. No API keys or internet connection are needed after setup.
 
@@ -9,12 +9,16 @@ Everything runs locally. No API keys or internet connection are needed after set
 ```
 docs/ → chunk by paragraph → ChromaDB (embeddings)
                                     ↓
-question → retrieve top 3 chunks → build prompt with context → Ollama → answer
+question → retrieve top 3 chunks → filter by distance
+                                    ├─ no chunks pass → "no relevant information" response
+                                    └─ chunks pass → build prompt → Ollama → structured response
 ```
 
 1. **Ingest:** Loads every `.txt` and `.md` file in `docs/`, splits each file into paragraphs (skipping markdown headings), and stores the chunks in a persistent ChromaDB collection. ChromaDB creates the embeddings automatically using its default model (all-MiniLM-L6-v2).
 2. **Retrieve:** Embeds the user's question and finds the 3 closest chunks using cosine distance.
-3. **Generate:** Builds a prompt containing system rules plus the retrieved chunks (each labeled with its source file), then sends it to `llama3.2:1b` through Ollama's `/api/chat` endpoint and streams the answer.
+3. **Filter:** Uses the best distance to set a confidence level, then keeps only chunks below `DISTANCE_THRESHOLD`. If no chunks pass, the pipeline returns a "no relevant information" response without calling the model.
+4. **Generate:** Builds a prompt containing system rules plus the remaining chunks (each labeled with its source file), then sends it to `llama3.2:1b` through Ollama's `/api/chat` endpoint with a temperature of 0.
+5. **Respond:** Returns a dictionary containing the answer, sources, confidence level, and number of chunks used.
 
 ### About Cosine Distance
 
@@ -24,20 +28,44 @@ The collection uses cosine distance to measure how similar a chunk is to the que
 - **Around 0.5:** somewhat related
 - **Close to 1:** unrelated
 
-The distances in the test results below follow this scale: the answerable question's best match was 0.23, while the out-of-scope question's best match was 0.93.
+The distances in the baseline test results below follow this scale: the answerable question's best match was 0.23, while the out-of-scope question's best match was 0.93.
 
 ## Features
 
 - Paragraph-based chunking with source metadata
 - Persistent vector database (`rag_db/`), so documents are only embedded once
-- System prompt that restricts answers to the provided context and asks for source citations
-- Retrieved chunks (file, distance, and preview) are displayed before the answer
-- Streaming output with generation time
+- Four guardrails: distance filtering, confidence levels, a strengthened system prompt, and structured responses
+- Source lists built in code from the chunks sent to the model
+- Retrieved chunks (file, distance, preview, and pass/filtered status) are displayed before the response
 - Graceful error messages if Ollama isn't running or the model isn't downloaded
+- Automatic four-query test run on startup
 - Interactive loop that runs until the user types `quit`
+
+## Guardrails
+
+| Guardrail | What it does |
+|---|---|
+| Distance filtering | Sends only chunks below `DISTANCE_THRESHOLD` to the model. If no chunks pass, it returns a "no relevant information" response without calling the model. |
+| Confidence levels | Uses the best retrieved distance to return `high` (< 0.5), `medium` (< 1.0), or `low` (>= 1.0). |
+| Strengthened system prompt | Tells the model not to make up information, to say "I don't know" when unsure, and to always cite its sources. |
+| Structured response | Returns a dictionary with `answer`, `sources`, `confidence`, and `chunks_retrieved`. |
+
+### Example Response
+
+```json
+{
+  "answer": "[Answer from the model] (llms.md)",
+  "sources": ["llms.md"],
+  "confidence": "high",
+  "chunks_retrieved": 3
+}
+```
+
+`chunks_retrieved` is the number of chunks that passed the distance filter and were sent to the model.
 
 ## Project Structure
 
+```
 RAG_Pipeline/
 ├── docs/
 │   ├── embeddings.md
@@ -47,9 +75,9 @@ RAG_Pipeline/
 │   ├── streamlit.md
 │   └── vector_databases.md
 ├── .gitignore       # Keeps venv/ and rag_db/ out of GitHub
-├── my_rag.py        # Terminal RAG pipeline
+├── my_rag.py        # Terminal RAG pipeline with guardrails
 └── README.md
-
+```
 
 ## Setup
 
@@ -73,18 +101,30 @@ python my_rag.py
 
 On the first run, the documents are ingested (30 chunks from 6 files). Later runs reuse the saved database. To re-ingest after changing the documents, delete the `rag_db/` folder.
 
-Type a question at the `You:` prompt, or `quit` to exit.
+The program runs the four guardrail tests first, printing a structured response for each. It then starts the interactive prompt. Type a question at the `You:` prompt, or `quit` to exit.
 
-### Bonus: Streamlit Version
+To change how strict the filter is, edit `DISTANCE_THRESHOLD` at the top of `my_rag.py`.
 
-```
-pip install streamlit
-streamlit run rag_app.py
-```
+## Guardrail Test Results
 
-The Streamlit app adds a chat interface, streaming answers, an expandable list of retrieved sources, a slider for how many chunks to retrieve, and a button to re-load documents.
+The test run started with a `DISTANCE_THRESHOLD` of 1.0.
 
-## Test Results
+| Query type | Question | Best distance | Confidence | Chunks retrieved | Result |
+|---|---|---|---|---|---|
+| In-scope | What command downloads a model in Ollama? | [fill in] | [fill in] | [fill in] | [fill in] |
+| Partially in-scope | What command downloads a model in Ollama, and how much does a GPU cost? | [fill in] | [fill in] | [fill in] | [fill in] |
+| Out-of-scope | What is the capital of France? | [fill in] | [fill in] | [fill in] | [fill in] |
+| Ambiguous | How does it work? | [fill in] | [fill in] | [fill in] | [fill in] |
+
+### Threshold Tuning
+
+In the baseline tests below, all three questions had a best distance under 1.0, so a threshold of 1.0 would not have rejected any of them.
+
+After testing, I set `DISTANCE_THRESHOLD` to [final value] because [reason based on your results].
+
+## Baseline Test Results (Before Guardrails)
+
+These tests show how the pipeline behaved before the guardrails were added.
 
 ### Test 1: Answerable from the documents
 
@@ -159,7 +199,7 @@ ERROR: Cannot connect to Ollama. Is it running? (ollama serve)
 
 **Result: Passed.** Retrieval still worked because ChromaDB handles embeddings on its own. When generation tried to reach Ollama, the connection error was caught and a helpful message was shown. The program kept running, so after restarting Ollama the next question worked without restarting the script.
 
-## Analysis
+## Baseline Analysis
 
 | Test | Best distance | Result |
 |---|---|---|
@@ -173,8 +213,14 @@ The hardest case was the middle one, where the retrieved chunks were loosely rel
 
 The model also followed the citation rule inconsistently: it skipped citations on a correct answer, invented a link on a wrong answer, and cited a file on a refusal.
 
+These results led to the distance filter and the source list built in code.
+
+## Limitations
+
+- Distance measures similarity, not whether a chunk actually answers the question.
+- The system prompt reduces unsupported answers but can't guarantee the model will follow every rule.
+- Confidence is based on the best distance before filtering, so a rejected query can still show `medium` if the threshold is below 1.0.
+
 ## Possible Improvements
 
-- **Distance threshold:** If the best chunk's distance is above about 0.6, return "I don't have enough information" without calling the model. This would have fixed Test 2.
-- **Add citations in code:** List the retrieved source files after each answer in code instead of relying on the model. (The Streamlit version does this.)
-- **Larger model:** A model like `llama3.2:3b` follows instructions more reliably, at the cost of speed and memory.
+- **Larger model:** A model like `llama3.2:3b` follows instructions more reliably, at the cost of speed and memory.FF
