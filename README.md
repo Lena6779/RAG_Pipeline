@@ -54,7 +54,7 @@ The distances in the baseline test results below follow this scale: the answerab
 
 ```json
 {
-  "answer": "[Answer from the model] (llms.md)",
+  "answer": "The command to download a model in Ollama is \"ollama pull\". For example, \"ollama pull llama3.2:1b\" downloads a small 1-billion-parameter version of Meta's Llama 3.2 model.",
   "sources": ["llms.md"],
   "confidence": "high",
   "chunks_retrieved": 3
@@ -107,20 +107,33 @@ To change how strict the filter is, edit `DISTANCE_THRESHOLD` at the top of `my_
 
 ## Guardrail Test Results
 
-The test run started with a `DISTANCE_THRESHOLD` of 1.0.
+I ran all four query types at two thresholds: the assignment's starting value of 1.0, then 0.6. Both runs used a temperature of 0.
+
+### Threshold 1.0
 
 | Query type | Question | Best distance | Confidence | Chunks retrieved | Result |
 |---|---|---|---|---|---|
-| In-scope | What command downloads a model in Ollama? | [fill in] | [fill in] | [fill in] | [fill in] |
-| Partially in-scope | What command downloads a model in Ollama, and how much does a GPU cost? | [fill in] | [fill in] | [fill in] | [fill in] |
-| Out-of-scope | What is the capital of France? | [fill in] | [fill in] | [fill in] | [fill in] |
-| Ambiguous | How does it work? | [fill in] | [fill in] | [fill in] | [fill in] |
+| In-scope | What command downloads a model in Ollama? | 0.23 | high | 3 | Passed. Correctly answered `ollama pull`. |
+| Partially in-scope | What command downloads a model in Ollama, and how much does a GPU cost? | 0.39 | high | 3 | Passed. Gave `ollama pull` and said the context did not cover GPU cost, although it opened with "I don't know." |
+| Out-of-scope | What is the capital of France? | 0.93 | medium | 3 | Partly passed. The model said "I don't know," but the filter let unrelated chunks through and `sources` still listed files. |
+| Ambiguous | How does it work? | 0.80 | medium | 3 | Partly passed. The model said "I don't know," but the filter let unrelated chunks through and `sources` still listed files. |
+
+### Threshold 0.6
+
+| Query type | Question | Best distance | Confidence | Chunks retrieved | Result |
+|---|---|---|---|---|---|
+| In-scope | What command downloads a model in Ollama? | 0.23 | high | 3 | Passed. Correctly answered `ollama pull`. |
+| Partially in-scope | What command downloads a model in Ollama, and how much does a GPU cost? | 0.39 | high | 2 | Partly passed. It did not make up a GPU cost, but it wrongly said the download command was not specified while also quoting `ollama pull`. |
+| Out-of-scope | What is the capital of France? | 0.93 | medium | 0 | Passed. All chunks were filtered, the model was not called, and `sources` was empty. |
+| Ambiguous | How does it work? | 0.80 | medium | 0 | Passed. All chunks were filtered, the model was not called, and `sources` was empty. |
 
 ### Threshold Tuning
 
-In the baseline tests below, all three questions had a best distance under 1.0, so a threshold of 1.0 would not have rejected any of them.
+At 1.0, all 12 retrieved chunks passed the filter, so it did not block anything. The model refused the out-of-scope and ambiguous questions on its own, but that relied entirely on the model following its instructions.
 
-After testing, I set `DISTANCE_THRESHOLD` to [final value] because [reason based on your results].
+I set `DISTANCE_THRESHOLD` to 0.6 because it falls between the in-scope best distance (0.23) and the out-of-scope and ambiguous best distances (0.93 and 0.80). At 0.6, those two questions are rejected in code before the model is called. The baseline "What is an LLM?" question had a best distance of 0.77, so it would also be filtered at this threshold, although it was not part of these test runs.
+
+There was one tradeoff: the partially in-scope answer got worse at 0.6. It lost one chunk, and the model contradicted itself about the download command. This shows that the threshold can block unrelated questions, but it can't guarantee that a small model will handle a mixed question well.
 
 ## Baseline Test Results (Before Guardrails)
 
@@ -219,8 +232,10 @@ These results led to the distance filter and the source list built in code.
 
 - Distance measures similarity, not whether a chunk actually answers the question.
 - The system prompt reduces unsupported answers but can't guarantee the model will follow every rule.
-- Confidence is based on the best distance before filtering, so a rejected query can still show `medium` if the threshold is below 1.0.
+- Confidence is based on the best distance before filtering, so a rejected query can still show `medium` when the threshold is below 1.0. This happened in the out-of-scope and ambiguous tests at 0.6.
+- Confidence reflects the closest chunk, not whether the whole question was answered. The partially in-scope question showed `high` even though the documents do not cover GPU cost.
+- The model did not name a source in any of the four test answers, despite the citation rule. The `sources` field is built in code, so it still shows which files were sent to the model.
 
 ## Possible Improvements
 
-- **Larger model:** A model like `llama3.2:3b` follows instructions more reliably, at the cost of speed and memory.FF
+- **Larger model:** A model like `llama3.2:3b` follows instructions more reliably, at the cost of speed and memory.
